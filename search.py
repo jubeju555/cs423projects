@@ -75,19 +75,40 @@ def tinyMazeSearch(problem):
 def depthFirstSearch(problem: SearchProblem):
     """
     Search the deepest nodes in the search tree first.
-
-    Your search algorithm needs to return a list of actions that reaches the
-    goal. Make sure to implement a graph search algorithm.
-
-    To get started, you might want to try some of these simple commands to
-    understand the search problem that is being passed in:
-
-    print("Start:", problem.getStartState())
-    print("Is the start a goal?", problem.isGoalState(problem.getStartState()))
-    print("Start's successors:", problem.getSuccessors(problem.getStartState()))
     """
-    "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    # Using a stack since dfs = LIFO
+    myStack = util.Stack()
+    startState = problem.getStartState()
+    # Pushing a tuple of (state, list of actions to get here so far)
+    myStack.push((startState, []))
+
+    visited = []
+
+    while not myStack.isEmpty():
+        current, actionsSoFar = myStack.pop()
+
+        # Check if we're done FIRST before doing anything else
+        if problem.isGoalState(current):
+            return actionsSoFar
+
+        # Only expand if we haven't seen it before
+        if current not in visited:
+            visited.append(current)
+
+            successors = problem.getSuccessors(current)
+            for succ in successors:
+                nextState = succ[0]
+                actionToTake = succ[1]
+                # We do not care about cost for dfs so just ignoring 3rd value
+
+                if nextState not in visited:
+                    # Make a NEW list because using the same one messes
+                    # up the other branches since lists are mutable
+                    updatedActions = actionsSoFar + [actionToTake]
+                    myStack.push((nextState, updatedActions))
+
+    # If the loop ends and we never hit return, no path exists
+    return []
 
 def breadthFirstSearch(problem: SearchProblem):
     """Search the shallowest nodes in the search tree first."""
@@ -96,8 +117,35 @@ def breadthFirstSearch(problem: SearchProblem):
 
 def uniformCostSearch(problem: SearchProblem):
     """Search the node of least total cost first."""
-    "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    # Using a priority queue so we always expand the cheapest path first
+    pq = util.PriorityQueue()
+    startState = problem.getStartState()
+    # Pushing (state, path, cost so far) - priority is just the cost
+    pq.push((startState, [], 0), 0)
+
+    # Keep track of states we already expanded
+    visited = []
+
+    while not pq.isEmpty():
+        currState, path, currCost = pq.pop()
+
+        # Goal check happens when we pop, not when we push
+        if problem.isGoalState(currState):
+            return path
+
+        # Only expand if we haven't already dealt with this state
+        if currState not in visited:
+            visited.append(currState)
+
+            for nextState, action, stepCost in problem.getSuccessors(currState):
+                if nextState not in visited:
+                    # Build up the new path and total cost
+                    newPath = path + [action]
+                    newCost = currCost + stepCost
+                    pq.push((nextState, newPath, newCost), newCost)
+
+    # If we get here the queue emptied out without finding a goal
+    return []
 
 def nullHeuristic(state, problem=None):
     """
