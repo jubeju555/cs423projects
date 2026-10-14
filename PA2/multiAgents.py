@@ -176,15 +176,77 @@ class MinimaxAgent(MultiAgentSearchAgent):
 
 class AlphaBetaAgent(MultiAgentSearchAgent):
     """
-    Your minimax agent with alpha-beta pruning (question 3)
+    Minimax with alpha-beta pruning across all ghost turns.
     """
 
     def getAction(self, gameState: GameState):
-        """
-        Returns the minimax action using self.depth and self.evaluationFunction
-        """
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        def searchTurns(board, whoseTurn, roundsDone, alpha, beta):
+            if board.isWin() or board.isLose():
+                return self.evaluationFunction(board), Directions.STOP
+
+            if roundsDone >= self.depth:
+                return self.evaluationFunction(board), Directions.STOP
+
+            movesHere = board.getLegalActions(whoseTurn)
+
+            if not movesHere:
+                return self.evaluationFunction(board), Directions.STOP
+
+            turnAfter = whoseTurn + 1
+            roundsAfter = roundsDone
+
+            # A round finishes after the last ghost moves.
+            if turnAfter == board.getNumAgents():
+                turnAfter = 0
+                roundsAfter += 1
+
+            pickedMove = movesHere[0]
+
+            if whoseTurn == 0:
+                pickedScore = float("-inf")
+
+                for move in movesHere:
+                    nextBoard = board.generateSuccessor(whoseTurn, move)
+                    result = searchTurns(
+                        nextBoard, turnAfter, roundsAfter, alpha, beta
+                    )
+                    moveScore = result[0]
+
+                    if moveScore > pickedScore:
+                        pickedScore = moveScore
+                        pickedMove = move
+
+                    # Equality must stay in the search.
+                    if pickedScore > beta:
+                        return pickedScore, pickedMove
+
+                    alpha = max(alpha, pickedScore)
+
+            else:
+                pickedScore = float("inf")
+
+                for move in movesHere:
+                    nextBoard = board.generateSuccessor(whoseTurn, move)
+                    result = searchTurns(
+                        nextBoard, turnAfter, roundsAfter, alpha, beta
+                    )
+                    moveScore = result[0]
+
+                    if moveScore < pickedScore:
+                        pickedScore = moveScore
+                        pickedMove = move
+
+                    if pickedScore < alpha:
+                        return pickedScore, pickedMove
+
+                    beta = min(beta, pickedScore)
+
+            return pickedScore, pickedMove
+
+        answer = searchTurns(
+            gameState, 0, 0, float("-inf"), float("inf")
+        )
+        return answer[1]
 
 class ExpectimaxAgent(MultiAgentSearchAgent):
     """
