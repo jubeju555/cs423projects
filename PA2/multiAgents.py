@@ -21,61 +21,75 @@ from pacman import GameState
 
 class ReflexAgent(Agent):
     """
-    A reflex agent chooses an action at each choice point by examining
-    its alternatives via a state evaluation function.
-
-    The code below is provided as a guide.  You are welcome to change
-    it in any way you see fit, so long as you don't touch our method
-    headers.
+    Choose a move based on food and nearby ghosts.
     """
 
-
     def getAction(self, gameState: GameState):
-        """
-        You do not need to change this method, but you're welcome to.
-
-        getAction chooses among the best options according to the evaluation function.
-
-        Just like in the previous project, getAction takes a GameState and returns
-        some Directions.X for some X in the set {NORTH, SOUTH, WEST, EAST, STOP}
-        """
-        # Collect legal moves and successor states
         legalMoves = gameState.getLegalActions()
 
-        # Choose one of the best actions
-        scores = [self.evaluationFunction(gameState, action) for action in legalMoves]
+        scores = [
+            self.evaluationFunction(gameState, action)
+            for action in legalMoves
+        ]
+
         bestScore = max(scores)
-        bestIndices = [index for index in range(len(scores)) if scores[index] == bestScore]
-        chosenIndex = random.choice(bestIndices) # Pick randomly among the best
+        bestIndices = [
+            i for i in range(len(scores))
+            if scores[i] == bestScore
+        ]
 
-        "Add more of your code here if you want to"
-
+        chosenIndex = random.choice(bestIndices)
         return legalMoves[chosenIndex]
 
     def evaluationFunction(self, currentGameState: GameState, action):
         """
-        Design a better evaluation function here.
-
-        The evaluation function takes in the current and proposed successor
-        GameStates (pacman.py) and returns a number, where higher numbers are better.
-
-        The code below extracts some useful information from the state, like the
-        remaining food (newFood) and Pacman position after moving (newPos).
-        newScaredTimes holds the number of moves that each ghost will remain
-        scared because of Pacman having eaten a power pellet.
-
-        Print out these variables to see what you're getting, then combine them
-        to create a masterful evaluation function.
+        Favor food, avoid active ghosts, and approach scared ghosts
+        when their timers make capture plausible.
         """
-        # Useful information you can extract from a GameState (pacman.py)
-        successorGameState = currentGameState.generatePacmanSuccessor(action)
-        newPos = successorGameState.getPacmanPosition()
-        newFood = successorGameState.getFood()
-        newGhostStates = successorGameState.getGhostStates()
-        newScaredTimes = [ghostState.scaredTimer for ghostState in newGhostStates]
+        afterMove = currentGameState.generatePacmanSuccessor(action)
 
-        "*** YOUR CODE HERE ***"
-        return successorGameState.getScore()
+        if afterMove.isWin():
+            return float("inf")
+        if afterMove.isLose():
+            return float("-inf")
+
+        pacSpot = afterMove.getPacmanPosition()
+        foodLeft = afterMove.getFood().asList()
+        ghostList = afterMove.getGhostStates()
+        moveScore = afterMove.getScore()
+
+        # Less food left is better.
+        moveScore -= len(foodLeft) * 4
+
+        foodGap = float("inf")
+        for pellet in foodLeft:
+            gap = manhattanDistance(pacSpot, pellet)
+            if gap < foodGap:
+                foodGap = gap
+
+        if foodLeft:
+            moveScore += 10 / (foodGap + 1)
+
+        for ghost in ghostList:
+            ghostGap = manhattanDistance(pacSpot, ghost.getPosition())
+
+            if ghost.scaredTimer > 0:
+                if ghostGap < ghost.scaredTimer:
+                    moveScore += 20 / (ghostGap + 1)
+            else:
+                if ghostGap == 0:
+                    return float("-inf")
+
+                # Avoid ending a move beside an active ghost.
+                if ghostGap <= 1:
+                    moveScore -= 200
+
+                moveScore -= 12 / ghostGap
+
+        if action == Directions.STOP:
+            moveScore -= 2
+
+        return moveScore
 
 def scoreEvaluationFunction(currentGameState: GameState):
     """
@@ -109,34 +123,56 @@ class MultiAgentSearchAgent(Agent):
 
 class MinimaxAgent(MultiAgentSearchAgent):
     """
-    Your minimax agent (question 2)
+    Pacman picks the highest score, and ghosts pick the lowest.
     """
 
     def getAction(self, gameState: GameState):
-        """
-        Returns the minimax action from the current gameState using self.depth
-        and self.evaluationFunction.
+        def searchTurns(board, whoseTurn, roundsDone):
+            # Evaluate the board when the game or search is finished.
+            if board.isWin() or board.isLose():
+                return self.evaluationFunction(board), Directions.STOP
 
-        Here are some method calls that might be useful when implementing minimax.
+            if roundsDone >= self.depth:
+                return self.evaluationFunction(board), Directions.STOP
 
-        gameState.getLegalActions(agentIndex):
-        Returns a list of legal actions for an agent
-        agentIndex=0 means Pacman, ghosts are >= 1
+            movesHere = board.getLegalActions(whoseTurn)
 
-        gameState.generateSuccessor(agentIndex, action):
-        Returns the successor game state after an agent takes an action
+            if not movesHere:
+                return self.evaluationFunction(board), Directions.STOP
 
-        gameState.getNumAgents():
-        Returns the total number of agents in the game
+            turnAfter = whoseTurn + 1
+            roundsAfter = roundsDone
 
-        gameState.isWin():
-        Returns whether or not the game state is a winning state
+            # Count a full round after everyone has moved.
+            if turnAfter == board.getNumAgents():
+                turnAfter = 0
+                roundsAfter += 1
 
-        gameState.isLose():
-        Returns whether or not the game state is a losing state
-        """
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+            moveScores = []
+
+            for move in movesHere:
+                nextBoard = board.generateSuccessor(whoseTurn, move)
+
+                result = searchTurns(
+                    nextBoard,
+                    turnAfter,
+                    roundsAfter
+                )
+                moveScores.append(result[0])
+
+            if whoseTurn == 0:
+                pickedScore = max(moveScores)
+            else:
+                pickedScore = min(moveScores)
+
+            # index picks the first move if several scores are tied.
+            pickedIndex = moveScores.index(pickedScore)
+            pickedMove = movesHere[pickedIndex]
+
+            return pickedScore, pickedMove
+
+        answer = searchTurns(gameState, 0, 0)
+        return answer[1]
 
 class AlphaBetaAgent(MultiAgentSearchAgent):
     """
