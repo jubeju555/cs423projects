@@ -210,10 +210,56 @@ def betterEvaluationFunction(currentGameState: GameState):
     Your extreme ghost-hunting, pellet-nabbing, food-gobbling, unstoppable
     evaluation function (question 5).
 
-    DESCRIPTION: <write something here so we know what you did>
+    DESCRIPTION: The goal is to guess how good a game is for Pacman. I gave
+    wins a large value and losses a large negative value. Starting with the
+    current game score, it penalizes for more food and capsules. But, it 
+    rewards for being close to a capsule, and it rewards for being close 
+    to a scared ghost. Last, it penalizes being close to ghosts.
     """
     "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+
+    if currentGameState.isWin():
+        return 100000 + currentGameState.getScore()
+
+    if currentGameState.isLose():
+        return -100000
+
+    value = currentGameState.getScore()
+
+    pacman = currentGameState.getPacmanPosition()
+    foods = currentGameState.getFood().asList()
+    capsules = currentGameState.getCapsules()
+    ghosts = currentGameState.getGhostStates()
+
+    value -= len(foods)
+
+    if len(foods) > 0:
+        closest = float('inf')
+        for food in foods:
+            if manhattanDistance(food, pacman) < closest:
+                closest = manhattanDistance(food, pacman)
+
+        bonus = 10/(closest + 1)
+        value += bonus
+
+    value -= len(capsules)
+
+    for ghost in ghosts:
+        distance = manhattanDistance(ghost.getPosition(), pacman)
+
+        if ghost.scaredTimer > 0:
+            if distance < ghost.scaredTimer:
+                bonus = 10/(distance + 1)    
+                value += bonus
+
+        else:
+            penalty = 10/(distance + 1)
+            value -= penalty
+
+    return value
+
+
+        
 
 # Abbreviation
 better = betterEvaluationFunction
