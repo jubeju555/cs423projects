@@ -1,5 +1,5 @@
-# crawler.py
-# ----------
+# gridworld.py
+# ------------
 # Licensing Information:  You are free to use or extend these projects for
 # educational purposes provided that (1) you do not distribute or publish
 # solutions, (2) you retain this notice, and (3) you provide clear
@@ -12,373 +12,577 @@
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 
-#!/usr/bin/python
-import math
-from math import pi as PI
-import time
-import environment
+from __future__ import absolute_import
+from __future__ import print_function
 import random
+import sys
+import mdp
+import environment
+import util
+import optparse
+from six.moves import range
 
-class CrawlingRobotEnvironment(environment.Environment):
+class Gridworld(mdp.MarkovDecisionProcess):
+    """
+      Gridworld
+    """
+    def __init__(self, grid):
+        # layout
+        if type(grid) == type([]): grid = makeGrid(grid)
+        self.grid = grid
 
-    def __init__(self, crawlingRobot):
+        # parameters
+        self.livingReward = 0.0
+        self.noise = 0.2
 
-        self.crawlingRobot = crawlingRobot
-
-        # The state is of the form (armAngle, handAngle)
-        # where the angles are bucket numbers, not actual
-        # degree measurements
-        self.state = None
-
-        self.nArmStates = 9
-        self.nHandStates = 13
-
-        # create a list of arm buckets and hand buckets to
-        # discretize the state space
-        minArmAngle,maxArmAngle = self.crawlingRobot.getMinAndMaxArmAngles()
-        minHandAngle,maxHandAngle = self.crawlingRobot.getMinAndMaxHandAngles()
-        armIncrement = (maxArmAngle - minArmAngle) / (self.nArmStates-1)
-        handIncrement = (maxHandAngle - minHandAngle) / (self.nHandStates-1)
-        self.armBuckets = [minArmAngle+(armIncrement*i) \
-           for i in range(self.nArmStates)]
-        self.handBuckets = [minHandAngle+(handIncrement*i) \
-         for i in range(self.nHandStates)]
-
-        # Reset
-        self.reset()
-
-    def getCurrentState(self):
+    def setLivingReward(self, reward):
         """
-          Return the current state
-          of the crawling robot
+        The (negative) reward for exiting "normal" states.
+
+        Note that in the R+N text, this reward is on entering
+        a state and therefore is not clearly part of the state's
+        future rewards.
         """
-        return self.state
+        self.livingReward = reward
+
+    def setNoise(self, noise):
+        """
+        The probability of moving in an unintended direction.
+        """
+        self.noise = noise
+
 
     def getPossibleActions(self, state):
         """
-          Returns possible actions
-          for the states in the
-          current state
+        Returns list of valid actions for 'state'.
+
+        Note that you can request moves into walls and
+        that "exit" states transition to the terminal
+        state under the special action "done".
+        """
+        if state == self.grid.terminalState:
+            return ()
+        x,y = state
+        if type(self.grid[x][y]) == int:
+            return ('exit',)
+        return ('north','west','south','east')
+
+    def getStates(self):
+        """
+        Return list of all states.
+        """
+        # The true terminal state.
+        states = [self.grid.terminalState]
+        for x in range(self.grid.width):
+            for y in range(self.grid.height):
+                if self.grid[x][y] != '#':
+                    state = (x,y)
+                    states.append(state)
+        return states
+
+    def getReward(self, state, action, nextState):
+        """
+        Get reward for state, action, nextState transition.
+
+        Note that the reward depends only on the state being
+        departed (as in the R+N book examples, which more or
+        less use this convention).
+        """
+        if state == self.grid.terminalState:
+            return 0.0
+        x, y = state
+        cell = self.grid[x][y]
+        if type(cell) == int or type(cell) == float:
+            return cell
+        return self.livingReward
+
+    def getStartState(self):
+        for x in range(self.grid.width):
+            for y in range(self.grid.height):
+                if self.grid[x][y] == 'S':
+                    return (x, y)
+        raise 'Grid has no start state'
+
+    def isTerminal(self, state):
+        """
+        Only the TERMINAL_STATE state is *actually* a terminal state.
+        The other "exit" states are technically non-terminals with
+        a single action "exit" which leads to the true terminal state.
+        This convention is to make the grids line up with the examples
+        in the R+N textbook.
+        """
+        return state == self.grid.terminalState
+
+
+    def getTransitionStatesAndProbs(self, state, action):
+        """
+        Returns list of (nextState, prob) pairs
+        representing the states reachable
+        from 'state' by taking 'action' along
+        with their transition probabilities.
         """
 
-        actions = list()
+        if action not in self.getPossibleActions(state):
+            raise "Illegal action!"
 
-        currArmBucket,currHandBucket = state
-        if currArmBucket > 0: actions.append('arm-down')
-        if currArmBucket < self.nArmStates-1: actions.append('arm-up')
-        if currHandBucket > 0: actions.append('hand-down')
-        if currHandBucket < self.nHandStates-1: actions.append('hand-up')
+        if self.isTerminal(state):
+            return []
 
-        return actions
+        x, y = state
+
+        if type(self.grid[x][y]) == int or type(self.grid[x][y]) == float:
+            termState = self.grid.terminalState
+            return [(termState, 1.0)]
+
+        successors = []
+
+        northState = (self.__isAllowed(y+1,x) and (x,y+1)) or state
+        westState = (self.__isAllowed(y,x-1) and (x-1,y)) or state
+        southState = (self.__isAllowed(y-1,x) and (x,y-1)) or state
+        eastState = (self.__isAllowed(y,x+1) and (x+1,y)) or state
+
+        if action == 'north' or action == 'south':
+            if action == 'north':
+                successors.append((northState,1-self.noise))
+            else:
+                successors.append((southState,1-self.noise))
+
+            massLeft = self.noise
+            successors.append((westState,massLeft/2.0))
+            successors.append((eastState,massLeft/2.0))
+
+        if action == 'west' or action == 'east':
+            if action == 'west':
+                successors.append((westState,1-self.noise))
+            else:
+                successors.append((eastState,1-self.noise))
+
+            massLeft = self.noise
+            successors.append((northState,massLeft/2.0))
+            successors.append((southState,massLeft/2.0))
+
+        successors = self.__aggregate(successors)
+
+        return successors
+
+    def __aggregate(self, statesAndProbs):
+        counter = util.Counter()
+        for state, prob in statesAndProbs:
+            counter[state] += prob
+        newStatesAndProbs = []
+        for state, prob in counter.items():
+            newStatesAndProbs.append((state, prob))
+        return newStatesAndProbs
+
+    def __isAllowed(self, y, x):
+        if y < 0 or y >= self.grid.height: return False
+        if x < 0 or x >= self.grid.width: return False
+        return self.grid[x][y] != '#'
+
+class GridworldEnvironment(environment.Environment):
+
+    def __init__(self, gridWorld):
+        self.gridWorld = gridWorld
+        self.reset()
+
+    def getCurrentState(self):
+        return self.state
+
+    def getPossibleActions(self, state):
+        return self.gridWorld.getPossibleActions(state)
 
     def doAction(self, action):
-        """
-          Perform the action and update
-          the current state of the Environment
-          and return the reward for the
-          current state, the next state
-          and the taken action.
-
-          Returns:
-            nextState, reward
-        """
-        nextState, reward =  None, None
-
-        oldX,oldY = self.crawlingRobot.getRobotPosition()
-
-        armBucket,handBucket = self.state
-        armAngle,handAngle = self.crawlingRobot.getAngles()
-        if action == 'arm-up':
-            newArmAngle = self.armBuckets[armBucket+1]
-            self.crawlingRobot.moveArm(newArmAngle)
-            nextState = (armBucket+1,handBucket)
-        if action == 'arm-down':
-            newArmAngle = self.armBuckets[armBucket-1]
-            self.crawlingRobot.moveArm(newArmAngle)
-            nextState = (armBucket-1,handBucket)
-        if action == 'hand-up':
-            newHandAngle = self.handBuckets[handBucket+1]
-            self.crawlingRobot.moveHand(newHandAngle)
-            nextState = (armBucket,handBucket+1)
-        if action == 'hand-down':
-            newHandAngle = self.handBuckets[handBucket-1]
-            self.crawlingRobot.moveHand(newHandAngle)
-            nextState = (armBucket,handBucket-1)
-
-        newX,newY = self.crawlingRobot.getRobotPosition()
-
-        # a simple reward function
-        reward = newX - oldX
-
+        state = self.getCurrentState()
+        (nextState, reward) = self.getRandomNextState(state, action)
         self.state = nextState
-        return nextState, reward
+        return (nextState, reward)
 
+    def getRandomNextState(self, state, action, randObj=None):
+        rand = -1.0
+        if randObj is None:
+            rand = random.random()
+        else:
+            rand = randObj.random()
+        sum = 0.0
+        successors = self.gridWorld.getTransitionStatesAndProbs(state, action)
+        for nextState, prob in successors:
+            sum += prob
+            if sum > 1.0:
+                raise 'Total transition probability more than one; sample failure.'
+            if rand < sum:
+                reward = self.gridWorld.getReward(state, action, nextState)
+                return (nextState, reward)
+        raise 'Total transition probability less than one; sample failure.'
 
     def reset(self):
-        """
-         Resets the Environment to the initial state
-        """
-        ## Initialize the state to be the middle
-        ## value for each parameter e.g. if there are 13 and 19
-        ## buckets for the arm and hand parameters, then the intial
-        ## state should be (6,9)
-        ##
-        ## Also call self.crawlingRobot.setAngles()
-        ## to the initial arm and hand angle
+        self.state = self.gridWorld.getStartState()
 
-        armState = self.nArmStates//2
-        handState = self.nHandStates//2
-        self.state = armState,handState
-        self.crawlingRobot.setAngles(self.armBuckets[armState],self.handBuckets[handState])
-        self.crawlingRobot.positions = [20,self.crawlingRobot.getRobotPosition()[0]]
+class Grid:
+    """
+    A 2-dimensional array of immutables backed by a list of lists.  Data is accessed
+    via grid[x][y] where (x,y) are cartesian coordinates with x horizontal,
+    y vertical and the origin (0,0) in the bottom left corner.
 
+    The __str__ method constructs an output that is oriented appropriately.
+    """
+    def __init__(self, width, height, initialValue=' '):
+        self.width = width
+        self.height = height
+        self.data = [[initialValue for y in range(height)] for x in range(width)]
+        self.terminalState = 'TERMINAL_STATE'
 
-class CrawlingRobot:
+    def __getitem__(self, i):
+        return self.data[i]
 
-    def setAngles(self, armAngle, handAngle):
-        """
-            set the robot's arm and hand angles
-            to the passed in values
-        """
-        self.armAngle = armAngle
-        self.handAngle = handAngle
+    def __setitem__(self, key, item):
+        self.data[key] = item
 
-    def getAngles(self):
-        """
-            returns the pair of (armAngle, handAngle)
-        """
-        return self.armAngle, self.handAngle
+    def __eq__(self, other):
+        if other == None: return False
+        return self.data == other.data
 
-    def getRobotPosition(self):
-        """
-            returns the (x,y) coordinates
-            of the lower-left point of the
-            robot
-        """
-        return self.robotPos
+    def __hash__(self):
+        return hash(self.data)
 
-    def moveArm(self, newArmAngle):
-        """
-            move the robot arm to 'newArmAngle'
-        """
-        oldArmAngle = self.armAngle
-        if newArmAngle > self.maxArmAngle:
-            raise Exception('Crawling Robot: Arm Raised too high. Careful!')
-        if newArmAngle < self.minArmAngle:
-            raise Exception('Crawling Robot: Arm Raised too low. Careful!')
-        disp = self.displacement(self.armAngle, self.handAngle,
-                                  newArmAngle, self.handAngle)
-        curXPos = self.robotPos[0]
-        self.robotPos = (curXPos+disp, self.robotPos[1])
-        self.armAngle = newArmAngle
+    def copy(self):
+        g = Grid(self.width, self.height)
+        g.data = [x[:] for x in self.data]
+        return g
 
-        # Position and Velocity Sign Post
-        self.positions.append(self.getRobotPosition()[0])
-#        self.angleSums.append(abs(math.degrees(oldArmAngle)-math.degrees(newArmAngle)))
-        if len(self.positions) > 100:
-            self.positions.pop(0)
- #           self.angleSums.pop(0)
+    def deepCopy(self):
+        return self.copy()
 
-    def moveHand(self, newHandAngle):
-        """
-            move the robot hand to 'newArmAngle'
-        """
-        oldHandAngle = self.handAngle
+    def shallowCopy(self):
+        g = Grid(self.width, self.height)
+        g.data = self.data
+        return g
 
-        if newHandAngle > self.maxHandAngle:
-            raise Exception('Crawling Robot: Hand Raised too high. Careful!')
-        if newHandAngle < self.minHandAngle:
-            raise Exception('Crawling Robot: Hand Raised too low. Careful!')
-        disp = self.displacement(self.armAngle, self.handAngle, self.armAngle, newHandAngle)
-        curXPos = self.robotPos[0]
-        self.robotPos = (curXPos+disp, self.robotPos[1])
-        self.handAngle = newHandAngle
+    def _getLegacyText(self):
+        t = [[self.data[x][y] for x in range(self.width)] for y in range(self.height)]
+        t.reverse()
+        return t
 
-        # Position and Velocity Sign Post
-        self.positions.append(self.getRobotPosition()[0])
- #       self.angleSums.append(abs(math.degrees(oldHandAngle)-math.degrees(newHandAngle)))
-        if len(self.positions) > 100:
-            self.positions.pop(0)
- #           self.angleSums.pop(0)
+    def __str__(self):
+        return str(self._getLegacyText())
 
-    def getMinAndMaxArmAngles(self):
-        """
-            get the lower- and upper- bound
-            for the arm angles returns (min,max) pair
-        """
-        return self.minArmAngle, self.maxArmAngle
+def makeGrid(gridString):
+    width, height = len(gridString[0]), len(gridString)
+    grid = Grid(width, height)
+    for ybar, line in enumerate(gridString):
+        y = height - ybar - 1
+        for x, el in enumerate(line):
+            grid[x][y] = el
+    return grid
 
-    def getMinAndMaxHandAngles(self):
-        """
-            get the lower- and upper- bound
-            for the hand angles returns (min,max) pair
-        """
-        return self.minHandAngle, self.maxHandAngle
+def getCliffGrid():
+    grid = [[' ',' ',' ',' ',' '],
+            ['S',' ',' ',' ',10],
+            [-100,-100, -100, -100, -100]]
+    return Gridworld(makeGrid(grid))
 
-    def getRotationAngle(self):
-        """
-            get the current angle the
-            robot body is rotated off the ground
-        """
-        armCos, armSin = self.__getCosAndSin(self.armAngle)
-        handCos, handSin = self.__getCosAndSin(self.handAngle)
-        x = self.armLength * armCos + self.handLength * handCos + self.robotWidth
-        y = self.armLength * armSin + self.handLength * handSin + self.robotHeight
-        if y < 0:
-            return math.atan(-y/x)
-        return 0.0
+def getCliffGrid2():
+    grid = [[' ',' ',' ',' ',' '],
+            [8,'S',' ',' ',10],
+            [-100,-100, -100, -100, -100]]
+    return Gridworld(grid)
+
+def getDiscountGrid():
+    grid = [[' ',' ',' ',' ',' '],
+            [' ','#',' ',' ',' '],
+            [' ','#', 1,'#', 10],
+            ['S',' ',' ',' ',' '],
+            [-10,-10, -10, -10, -10]]
+    return Gridworld(grid)
+
+def getBridgeGrid():
+    grid = [[ '#',-100, -100, -100, -100, -100, '#'],
+            [   1, 'S',  ' ',  ' ',  ' ',  ' ',  10],
+            [ '#',-100, -100, -100, -100, -100, '#']]
+    return Gridworld(grid)
+
+def getBookGrid():
+    grid = [[' ',' ',' ',+1],
+            [' ','#',' ',-1],
+            ['S',' ',' ',' ']]
+    return Gridworld(grid)
+
+def getMazeGrid():
+    grid = [[' ',' ',' ',+1],
+            ['#','#',' ','#'],
+            [' ','#',' ',' '],
+            [' ','#','#',' '],
+            ['S',' ',' ',' ']]
+    return Gridworld(grid)
 
 
-    ## You shouldn't need methods below here
 
+def getUserAction(state, actionFunction):
+    """
+    Get an action from the user (rather than the agent).
 
-    def __getCosAndSin(self, angle):
-        return math.cos(angle), math.sin(angle)
+    Used for debugging and lecture demos.
+    """
+    import graphicsUtils
+    action = None
+    while True:
+        keys = graphicsUtils.wait_for_keys()
+        if 'Up' in keys: action = 'north'
+        if 'Down' in keys: action = 'south'
+        if 'Left' in keys: action = 'west'
+        if 'Right' in keys: action = 'east'
+        if 'q' in keys: sys.exit(0)
+        if action == None: continue
+        break
+    actions = actionFunction(state)
+    if action not in actions:
+        action = actions[0]
+    return action
 
-    def displacement(self, oldArmDegree, oldHandDegree, armDegree, handDegree):
+def printString(x): print(x)
 
-        oldArmCos, oldArmSin = self.__getCosAndSin(oldArmDegree)
-        armCos, armSin = self.__getCosAndSin(armDegree)
-        oldHandCos, oldHandSin = self.__getCosAndSin(oldHandDegree)
-        handCos, handSin = self.__getCosAndSin(handDegree)
+def runEpisode(agent, environment, discount, decision, display, message, pause, episode):
+    returns = 0
+    totalDiscount = 1.0
+    environment.reset()
+    if 'startEpisode' in dir(agent): agent.startEpisode()
+    message("BEGINNING EPISODE: "+str(episode)+"\n")
+    while True:
 
-        xOld = self.armLength * oldArmCos + self.handLength * oldHandCos + self.robotWidth
-        yOld = self.armLength * oldArmSin + self.handLength * oldHandSin + self.robotHeight
+        # DISPLAY CURRENT STATE
+        state = environment.getCurrentState()
+        display(state)
+        pause()
 
-        x = self.armLength * armCos + self.handLength * handCos + self.robotWidth
-        y = self.armLength * armSin + self.handLength * handSin + self.robotHeight
+        # END IF IN A TERMINAL STATE
+        actions = environment.getPossibleActions(state)
+        if len(actions) == 0:
+            message("EPISODE "+str(episode)+" COMPLETE: RETURN WAS "+str(returns)+"\n")
+            return returns
 
-        if y < 0:
-            if yOld <= 0:
-                return math.sqrt(xOld*xOld + yOld*yOld) - math.sqrt(x*x + y*y)
-            return (xOld - yOld*(x-xOld) / (y - yOld)) - math.sqrt(x*x + y*y)
-        else:
-            if yOld  >= 0:
-                return 0.0
-            return -(x - y * (xOld-x)/(yOld-y)) + math.sqrt(xOld*xOld + yOld*yOld)
+        # GET ACTION (USUALLY FROM AGENT)
+        action = decision(state)
+        if action == None:
+            raise 'Error: Agent returned None action'
 
-        raise Exception('Never Should See This!')
+        # EXECUTE ACTION
+        nextState, reward = environment.doAction(action)
+        message("Started in state: "+str(state)+
+                "\nTook action: "+str(action)+
+                "\nEnded in state: "+str(nextState)+
+                "\nGot reward: "+str(reward)+"\n")
+        # UPDATE LEARNER
+        if 'observeTransition' in dir(agent):
+            agent.observeTransition(state, action, nextState, reward)
 
-    def draw(self, stepCount, stepDelay):
-        x1, y1 = self.getRobotPosition()
-        x1 = x1 % self.totWidth
+        returns += reward * totalDiscount
+        totalDiscount *= discount
 
-        ## Check Lower Still on the ground
-        if y1 != self.groundY:
-            raise Exception('Flying Robot!!')
+    if 'stopEpisode' in dir(agent):
+        agent.stopEpisode()
 
-        rotationAngle = self.getRotationAngle()
-        cosRot, sinRot = self.__getCosAndSin(rotationAngle)
+def parseOptions():
+    optParser = optparse.OptionParser()
+    optParser.add_option('-d', '--discount',action='store',
+                         type='float',dest='discount',default=0.9,
+                         help='Discount on future (default %default)')
+    optParser.add_option('-r', '--livingReward',action='store',
+                         type='float',dest='livingReward',default=0.0,
+                         metavar="R", help='Reward for living for a time step (default %default)')
+    optParser.add_option('-n', '--noise',action='store',
+                         type='float',dest='noise',default=0.2,
+                         metavar="P", help='How often action results in ' +
+                         'unintended direction (default %default)' )
+    optParser.add_option('-e', '--epsilon',action='store',
+                         type='float',dest='epsilon',default=0.3,
+                         metavar="E", help='Chance of taking a random action in q-learning (default %default)')
+    optParser.add_option('-l', '--learningRate',action='store',
+                         type='float',dest='learningRate',default=0.5,
+                         metavar="P", help='TD learning rate (default %default)' )
+    optParser.add_option('-i', '--iterations',action='store',
+                         type='int',dest='iters',default=10,
+                         metavar="K", help='Number of rounds of value iteration (default %default)')
+    optParser.add_option('-k', '--episodes',action='store',
+                         type='int',dest='episodes',default=1,
+                         metavar="K", help='Number of epsiodes of the MDP to run (default %default)')
+    optParser.add_option('-g', '--grid',action='store',
+                         metavar="G", type='string',dest='grid',default="BookGrid",
+                         help='Grid to use (case sensitive; options are BookGrid, BridgeGrid, CliffGrid, MazeGrid, default %default)' )
+    optParser.add_option('-w', '--windowSize', metavar="X", type='int',dest='gridSize',default=150,
+                         help='Request a window width of X pixels *per grid cell* (default %default)')
+    optParser.add_option('-a', '--agent',action='store', metavar="A",
+                         type='string',dest='agent',default="random",
+                         help='Agent type (options are \'random\', \'value\' and \'q\', default %default)')
+    optParser.add_option('-t', '--text',action='store_true',
+                         dest='textDisplay',default=False,
+                         help='Use text-only ASCII display')
+    optParser.add_option('-p', '--pause',action='store_true',
+                         dest='pause',default=False,
+                         help='Pause GUI after each time step when running the MDP')
+    optParser.add_option('-q', '--quiet',action='store_true',
+                         dest='quiet',default=False,
+                         help='Skip display of any learning episodes')
+    optParser.add_option('-s', '--speed',action='store', metavar="S", type=float,
+                         dest='speed',default=1.0,
+                         help='Speed of animation, S > 1.0 is faster, 0.0 < S < 1.0 is slower (default %default)')
+    optParser.add_option('-m', '--manual',action='store_true',
+                         dest='manual',default=False,
+                         help='Manually control agent')
+    optParser.add_option('-v', '--valueSteps',action='store_true' ,default=False,
+                         help='Display each step of value iteration')
 
-        x2 = x1 + self.robotWidth * cosRot
-        y2 = y1 - self.robotWidth * sinRot
+    opts, args = optParser.parse_args()
 
-        x3 = x1 - self.robotHeight * sinRot
-        y3 = y1 - self.robotHeight * cosRot
+    if opts.manual and opts.agent != 'q':
+        print('## Disabling Agents in Manual Mode (-m) ##')
+        opts.agent = None
 
-        x4 = x3 + cosRot*self.robotWidth
-        y4 = y3 - sinRot*self.robotWidth
+    # MANAGE CONFLICTS
+    if opts.textDisplay or opts.quiet:
+    # if opts.quiet:
+        opts.pause = False
+        # opts.manual = False
 
-        self.canvas.coords(self.robotBody,x1,y1,x2,y2,x4,y4,x3,y3)
+    if opts.manual:
+        opts.pause = True
 
-        armCos, armSin = self.__getCosAndSin(rotationAngle+self.armAngle)
-        xArm = x4 + self.armLength * armCos
-        yArm = y4 - self.armLength * armSin
-
-        self.canvas.coords(self.robotArm,x4,y4,xArm,yArm)
-
-        handCos, handSin = self.__getCosAndSin(self.handAngle+rotationAngle)
-        xHand = xArm + self.handLength * handCos
-        yHand = yArm - self.handLength * handSin
-
-        self.canvas.coords(self.robotHand,xArm,yArm,xHand,yHand)
-
-
-        # Position and Velocity Sign Post
-#        time = len(self.positions) + 0.5 * sum(self.angleSums)
-#        velocity = (self.positions[-1]-self.positions[0]) / time
-#        if len(self.positions) == 1: return
-        steps = (stepCount - self.lastStep)
-        if steps==0:return
- #       pos = self.positions[-1]
-#        velocity = (pos - self.lastPos) / steps
-  #      g = .9 ** (10 * stepDelay)
-#        g = .99 ** steps
-#        self.velAvg = g * self.velAvg + (1 - g) * velocity
- #       g = .999 ** steps
- #       self.velAvg2 = g * self.velAvg2 + (1 - g) * velocity
-        pos = self.positions[-1]
-        velocity = pos - self.positions[-2]
-        vel2 = (pos - self.positions[0]) / len(self.positions)
-        self.velAvg = .9 * self.velAvg + .1 * vel2
-        velMsg = '100-step Avg Velocity: %.2f' % self.velAvg
-#        velMsg2 = '1000-step Avg Velocity: %.2f' % self.velAvg2
-        velocityMsg = 'Velocity: %.2f' % velocity
-        positionMsg = 'Position: %2.f' % pos
-        stepMsg = 'Step: %d' % stepCount
-        if 'vel_msg' in dir(self):
-            self.canvas.delete(self.vel_msg)
-            self.canvas.delete(self.pos_msg)
-            self.canvas.delete(self.step_msg)
-            self.canvas.delete(self.velavg_msg)
- #           self.canvas.delete(self.velavg2_msg)
- #       self.velavg2_msg = self.canvas.create_text(850,190,text=velMsg2)
-        self.velavg_msg = self.canvas.create_text(650,190,text=velMsg)
-        self.vel_msg = self.canvas.create_text(450,190,text=velocityMsg)
-        self.pos_msg = self.canvas.create_text(250,190,text=positionMsg)
-        self.step_msg = self.canvas.create_text(50,190,text=stepMsg)
-#        self.lastPos = pos
-        self.lastStep = stepCount
-#        self.lastVel = velocity
-
-    def __init__(self, canvas):
-
-        ## Canvas ##
-        self.canvas = canvas
-        self.velAvg = 0
-#        self.velAvg2 = 0
-#        self.lastPos = 0
-        self.lastStep = 0
-#        self.lastVel = 0
-
-        ## Arm and Hand Degrees ##
-        self.armAngle = self.oldArmDegree = 0.0
-        self.handAngle = self.oldHandDegree = -PI/6
-
-        self.maxArmAngle = PI/6
-        self.minArmAngle = -PI/6
-
-        self.maxHandAngle = 0
-        self.minHandAngle = -(5.0/6.0) * PI
-
-        ## Draw Ground ##
-        self.totWidth = canvas.winfo_reqwidth()
-        self.totHeight = canvas.winfo_reqheight()
-        self.groundHeight = 40
-        self.groundY = self.totHeight - self.groundHeight
-
-        self.ground = canvas.create_rectangle(0,
-            self.groundY,self.totWidth,self.totHeight, fill='blue')
-
-        ## Robot Body ##
-        self.robotWidth = 80
-        self.robotHeight = 40
-        self.robotPos = (20, self.groundY)
-        self.robotBody = canvas.create_polygon(0,0,0,0,0,0,0,0, fill='green')
-
-        ## Robot Arm ##
-        self.armLength = 60
-        self.robotArm = canvas.create_line(0,0,0,0,fill='orange',width=5)
-
-        ## Robot Hand ##
-        self.handLength = 40
-        self.robotHand = canvas.create_line(0,0,0,0,fill='red',width=3)
-
-        self.positions = [0,0]
-  #      self.angleSums = [0,0]
-
+    return opts
 
 
 if __name__ == '__main__':
-    from graphicsCrawlerDisplay import *
-    run()
+
+    opts = parseOptions()
+
+    ###########################
+    # GET THE GRIDWORLD
+    ###########################
+
+    import gridworld
+    mdpFunction = getattr(gridworld, "get"+opts.grid)
+    mdp = mdpFunction()
+    mdp.setLivingReward(opts.livingReward)
+    mdp.setNoise(opts.noise)
+    env = gridworld.GridworldEnvironment(mdp)
+
+
+    ###########################
+    # GET THE DISPLAY ADAPTER
+    ###########################
+
+    import textGridworldDisplay
+    display = textGridworldDisplay.TextGridworldDisplay(mdp)
+    if not opts.textDisplay:
+        import graphicsGridworldDisplay
+        display = graphicsGridworldDisplay.GraphicsGridworldDisplay(mdp, opts.gridSize, opts.speed)
+    try:
+        display.start()
+    except KeyboardInterrupt:
+        sys.exit(0)
+
+    ###########################
+    # GET THE AGENT
+    ###########################
+
+    import valueIterationAgents, qlearningAgents
+    a = None
+    if opts.agent == 'value':
+        a = valueIterationAgents.ValueIterationAgent(mdp, opts.discount, opts.iters)
+    elif opts.agent == 'q':
+        #env.getPossibleActions, opts.discount, opts.learningRate, opts.epsilon
+        #simulationFn = lambda agent, state: simulation.GridworldSimulation(agent,state,mdp)
+        gridWorldEnv = GridworldEnvironment(mdp)
+        actionFn = lambda state: mdp.getPossibleActions(state)
+        qLearnOpts = {'gamma': opts.discount,
+                      'alpha': opts.learningRate,
+                      'epsilon': opts.epsilon,
+                      'actionFn': actionFn}
+        a = qlearningAgents.QLearningAgent(**qLearnOpts)
+    elif opts.agent == 'random':
+        # # No reason to use the random agent without episodes
+        if opts.episodes == 0:
+            opts.episodes = 10
+        class RandomAgent:
+            def getAction(self, state):
+                return random.choice(mdp.getPossibleActions(state))
+            def getValue(self, state):
+                return 0.0
+            def getQValue(self, state, action):
+                return 0.0
+            def getPolicy(self, state):
+                "NOTE: 'random' is a special policy value; don't use it in your code."
+                return 'random'
+            def update(self, state, action, nextState, reward):
+                pass
+        a = RandomAgent()
+    else:
+        if not opts.manual: raise 'Unknown agent type: '+opts.agent
+
+
+    ###########################
+    # RUN EPISODES
+    ###########################
+    # DISPLAY Q/V VALUES BEFORE SIMULATION OF EPISODES
+    try:
+        if not opts.manual and opts.agent == 'value':
+            if opts.valueSteps:
+                for i in range(opts.iters):
+                    tempAgent = valueIterationAgents.ValueIterationAgent(mdp, opts.discount, i)
+                    display.displayValues(tempAgent, message = "VALUES AFTER "+str(i)+" ITERATIONS")
+                    display.pause()
+
+            display.displayValues(a, message = "VALUES AFTER "+str(opts.iters)+" ITERATIONS")
+            display.pause()
+            display.displayQValues(a, message = "Q-VALUES AFTER "+str(opts.iters)+" ITERATIONS")
+            display.pause()
+    except KeyboardInterrupt:
+        sys.exit(0)
+
+
+
+    # FIGURE OUT WHAT TO DISPLAY EACH TIME STEP (IF ANYTHING)
+    displayCallback = lambda x: None
+    if not opts.quiet:
+        if opts.manual and opts.agent == None:
+            displayCallback = lambda state: display.displayNullValues(state)
+        else:
+            if opts.agent == 'random': displayCallback = lambda state: display.displayValues(a, state, "CURRENT VALUES")
+            if opts.agent == 'value': displayCallback = lambda state: display.displayValues(a, state, "CURRENT VALUES")
+            if opts.agent == 'q': displayCallback = lambda state: display.displayQValues(a, state, "CURRENT Q-VALUES")
+
+    messageCallback = lambda x: printString(x)
+    if opts.quiet:
+        messageCallback = lambda x: None
+
+    # FIGURE OUT WHETHER TO WAIT FOR A KEY PRESS AFTER EACH TIME STEP
+    pauseCallback = lambda : None
+    if opts.pause:
+        pauseCallback = lambda : display.pause()
+
+    # FIGURE OUT WHETHER THE USER WANTS MANUAL CONTROL (FOR DEBUGGING AND DEMOS)
+    if opts.manual:
+        decisionCallback = lambda state : getUserAction(state, mdp.getPossibleActions)
+    else:
+        decisionCallback = a.getAction
+
+    # RUN EPISODES
+    if opts.episodes > 0:
+        print()
+        print("RUNNING", opts.episodes, "EPISODES")
+        print()
+    returns = 0
+    for episode in range(1, opts.episodes+1):
+        returns += runEpisode(a, env, opts.discount, decisionCallback, displayCallback, messageCallback, pauseCallback, episode)
+    if opts.episodes > 0:
+        print()
+        print("AVERAGE RETURNS FROM START STATE: "+str((returns+0.0) / opts.episodes))
+        print()
+        print()
+
+    # DISPLAY POST-LEARNING VALUES / Q-VALUES
+    if opts.agent == 'q' and not opts.manual:
+        try:
+            display.displayQValues(a, message = "Q-VALUES AFTER "+str(opts.episodes)+" EPISODES")
+            display.pause()
+            display.displayValues(a, message = "VALUES AFTER "+str(opts.episodes)+" EPISODES")
+            display.pause()
+        except KeyboardInterrupt:
+            sys.exit(0)

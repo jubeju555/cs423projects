@@ -1,5 +1,5 @@
-# environment.py
-# --------------
+# keyboardAgents.py
+# -----------------
 # Licensing Information:  You are free to use or extend these projects for
 # educational purposes provided that (1) you do not distribute or publish
 # solutions, (2) you retain this notice, and (3) you provide clear
@@ -12,45 +12,74 @@
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 
-#!/usr/bin/python
+from __future__ import absolute_import
+from game import Agent
+from game import Directions
+import random
 
-class Environment:
+class KeyboardAgent(Agent):
+    """
+    An agent controlled by the keyboard.
+    """
+    # NOTE: Arrow keys also work.
+    WEST_KEY  = 'a'
+    EAST_KEY  = 'd'
+    NORTH_KEY = 'w'
+    SOUTH_KEY = 's'
+    STOP_KEY = 'q'
 
-    def getCurrentState(self):
-        """
-        Returns the current state of enviornment
-        """
-        abstract
+    def __init__( self, index = 0 ):
 
-    def getPossibleActions(self, state):
-        """
-          Returns possible actions the agent
-          can take in the given state. Can
-          return the empty list if we are in
-          a terminal state.
-        """
-        abstract
+        self.lastMove = Directions.STOP
+        self.index = index
+        self.keys = []
 
-    def doAction(self, action):
-        """
-          Performs the given action in the current
-          environment state and updates the enviornment.
+    def getAction( self, state):
+        from graphicsUtils import keys_waiting
+        from graphicsUtils import keys_pressed
+        keys = keys_waiting() + keys_pressed()
+        if keys != []:
+            self.keys = keys
 
-          Returns a (reward, nextState) pair
-        """
-        abstract
+        legal = state.getLegalActions(self.index)
+        move = self.getMove(legal)
 
-    def reset(self):
-        """
-          Resets the current state to the start state
-        """
-        abstract
+        if move == Directions.STOP:
+            # Try to move in the same direction as before
+            if self.lastMove in legal:
+                move = self.lastMove
 
-    def isTerminal(self):
-        """
-          Has the enviornment entered a terminal
-          state? This means there are no successors
-        """
-        state = self.getCurrentState()
-        actions = self.getPossibleActions(state)
-        return len(actions) == 0
+        if (self.STOP_KEY in self.keys) and Directions.STOP in legal: move = Directions.STOP
+
+        if move not in legal:
+            move = random.choice(legal)
+
+        self.lastMove = move
+        return move
+
+    def getMove(self, legal):
+        move = Directions.STOP
+        if   (self.WEST_KEY in self.keys or 'Left' in self.keys) and Directions.WEST in legal:  move = Directions.WEST
+        if   (self.EAST_KEY in self.keys or 'Right' in self.keys) and Directions.EAST in legal: move = Directions.EAST
+        if   (self.NORTH_KEY in self.keys or 'Up' in self.keys) and Directions.NORTH in legal:   move = Directions.NORTH
+        if   (self.SOUTH_KEY in self.keys or 'Down' in self.keys) and Directions.SOUTH in legal: move = Directions.SOUTH
+        return move
+
+class KeyboardAgent2(KeyboardAgent):
+    """
+    A second agent controlled by the keyboard.
+    """
+    # NOTE: Arrow keys also work.
+    WEST_KEY  = 'j'
+    EAST_KEY  = "l"
+    NORTH_KEY = 'i'
+    SOUTH_KEY = 'k'
+    STOP_KEY = 'u'
+
+    def getMove(self, legal):
+        move = Directions.STOP
+        if   (self.WEST_KEY in self.keys) and Directions.WEST in legal:  move = Directions.WEST
+        if   (self.EAST_KEY in self.keys) and Directions.EAST in legal: move = Directions.EAST
+        if   (self.NORTH_KEY in self.keys) and Directions.NORTH in legal:   move = Directions.NORTH
+        if   (self.SOUTH_KEY in self.keys) and Directions.SOUTH in legal: move = Directions.SOUTH
+        return move

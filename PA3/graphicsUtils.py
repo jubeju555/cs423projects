@@ -1,5 +1,5 @@
-# autograder.py
-# -------------
+# graphicsUtils.py
+# ----------------
 # Licensing Information:  You are free to use or extend these projects for
 # educational purposes provided that (1) you do not distribute or publish
 # solutions, (2) you retain this notice, and (3) you provide clear
@@ -12,361 +12,443 @@
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 
-# imports from python standard library
-import grading
-import importlib.util
-import optparse
-import os
-import re
+from __future__ import absolute_import
+from __future__ import print_function
 import sys
-import projectParams
+import math
 import random
-random.seed(0)
-try:
-    from pacman import GameState
-except:
-    pass
+import string
+import time
+import types
+import tkinter
+import os.path
+from six.moves import range
 
-# register arguments and set default values
-def readCommand(argv):
-    parser = optparse.OptionParser(
-        description='Run public tests on student code')
-    parser.set_defaults(generateSolutions=False, edxOutput=False, gsOutput=False,
-                        muteOutput=False, printTestCase=False, noGraphics=False)
-    parser.add_option('--test-directory',
-                      dest='testRoot',
-                      default='test_cases',
-                      help='Root test directory which contains subdirectories corresponding to each question')
-    parser.add_option('--student-code',
-                      dest='studentCode',
-                      default=projectParams.STUDENT_CODE_DEFAULT,
-                      help='comma separated list of student code files')
-    parser.add_option('--code-directory',
-                      dest='codeRoot',
-                      default="",
-                      help='Root directory containing the student and testClass code')
-    parser.add_option('--test-case-code',
-                      dest='testCaseCode',
-                      default=projectParams.PROJECT_TEST_CLASSES,
-                      help='class containing testClass classes for this project')
-    parser.add_option('--generate-solutions',
-                      dest='generateSolutions',
-                      action='store_true',
-                      help='Write solutions generated to .solution file')
-    parser.add_option('--edx-output',
-                      dest='edxOutput',
-                      action='store_true',
-                      help='Generate edX output files')
-    parser.add_option('--gradescope-output',
-                      dest='gsOutput',
-                      action='store_true',
-                      help='Generate GradeScope output files')
-    parser.add_option('--mute',
-                      dest='muteOutput',
-                      action='store_true',
-                      help='Mute output from executing tests')
-    parser.add_option('--print-tests', '-p',
-                      dest='printTestCase',
-                      action='store_true',
-                      help='Print each test case before running them.')
-    parser.add_option('--test', '-t',
-                      dest='runTest',
-                      default=None,
-                      help='Run one particular test.  Relative to test root.')
-    parser.add_option('--question', '-q',
-                      dest='gradeQuestion',
-                      default=None,
-                      help='Grade one particular question.')
-    parser.add_option('--no-graphics',
-                      dest='noGraphics',
-                      action='store_true',
-                      help='No graphics display for pacman games.')
-    (options, args) = parser.parse_args(argv)
-    return options
+_Windows = sys.platform == 'win32'  # True if on Win95/98/NT
+
+_root_window = None      # The root window for graphics output
+_canvas = None      # The canvas which holds graphics
+_canvas_xs = None      # Size of canvas object
+_canvas_ys = None
+_canvas_x = None      # Current position on canvas
+_canvas_y = None
+_canvas_col = None      # Current colour (set to black below)
+_canvas_tsize = 12
+_canvas_tserifs = 0
 
 
-# confirm we should author solution files
-def confirmGenerate():
-    print('WARNING: this action will overwrite any solution files.')
-    print('Are you sure you want to proceed? (yes/no)')
+def formatColor(r, g, b):
+    return '#%02x%02x%02x' % (int(r * 255), int(g * 255), int(b * 255))
+
+
+def colorToVector(color):
+    return [int(x, 16) / 256.0 for x in [color[1:3], color[3:5], color[5:7]]]
+
+
+if _Windows:
+    _canvas_tfonts = ['times new roman', 'lucida console']
+else:
+    _canvas_tfonts = ['times', 'lucidasans-24']
+    pass  # XXX need defaults here
+
+
+def sleep(secs):
+    global _root_window
+    if _root_window == None:
+        time.sleep(secs)
+    else:
+        _root_window.update_idletasks()
+        _root_window.after(int(1000 * secs), _root_window.quit)
+        _root_window.mainloop()
+
+
+def begin_graphics(width=640, height=480, color=formatColor(0, 0, 0), title=None):
+
+    global _root_window, _canvas, _canvas_x, _canvas_y, _canvas_xs, _canvas_ys, _bg_color
+
+    # Check for duplicate call
+    if _root_window is not None:
+        # Lose the window.
+        _root_window.destroy()
+
+    # Save the canvas size parameters
+    _canvas_xs, _canvas_ys = width - 1, height - 1
+    _canvas_x, _canvas_y = 0, _canvas_ys
+    _bg_color = color
+
+    # Create the root window
+    _root_window = tkinter.Tk()
+    _root_window.protocol('WM_DELETE_WINDOW', _destroy_window)
+    _root_window.title(title or 'Graphics Window')
+    _root_window.resizable(0, 0)
+
+    # Create the canvas object
+    try:
+        _canvas = tkinter.Canvas(_root_window, width=width, height=height)
+        _canvas.pack()
+        draw_background()
+        _canvas.update()
+    except:
+        _root_window = None
+        raise
+
+    # Bind to key-down and key-up events
+    _root_window.bind("<KeyPress>", _keypress)
+    _root_window.bind("<KeyRelease>", _keyrelease)
+    _root_window.bind("<FocusIn>", _clear_keys)
+    _root_window.bind("<FocusOut>", _clear_keys)
+    _root_window.bind("<Button-1>", _leftclick)
+    _root_window.bind("<Button-2>", _rightclick)
+    _root_window.bind("<Button-3>", _rightclick)
+    _root_window.bind("<Control-Button-1>", _ctrl_leftclick)
+    _clear_keys()
+
+
+_leftclick_loc = None
+_rightclick_loc = None
+_ctrl_leftclick_loc = None
+
+
+def _leftclick(event):
+    global _leftclick_loc
+    _leftclick_loc = (event.x, event.y)
+
+
+def _rightclick(event):
+    global _rightclick_loc
+    _rightclick_loc = (event.x, event.y)
+
+
+def _ctrl_leftclick(event):
+    global _ctrl_leftclick_loc
+    _ctrl_leftclick_loc = (event.x, event.y)
+
+
+def wait_for_click():
     while True:
-        ans = sys.stdin.readline().strip()
-        if ans == 'yes':
-            break
-        elif ans == 'no':
-            sys.exit(0)
-        else:
-            print('please answer either "yes" or "no"')
+        global _leftclick_loc
+        global _rightclick_loc
+        global _ctrl_leftclick_loc
+        if _leftclick_loc != None:
+            val = _leftclick_loc
+            _leftclick_loc = None
+            return val, 'left'
+        if _rightclick_loc != None:
+            val = _rightclick_loc
+            _rightclick_loc = None
+            return val, 'right'
+        if _ctrl_leftclick_loc != None:
+            val = _ctrl_leftclick_loc
+            _ctrl_leftclick_loc = None
+            return val, 'ctrl_left'
+        sleep(0.05)
 
 
-# TODO: Fix this so that it tracebacks work correctly
-# Looking at source of the traceback module, presuming it works
-# the same as the intepreters, it uses co_filename.  This is,
-# however, a readonly attribute.
-def setModuleName(module, filename):
-    functionType = type(confirmGenerate)
-    classType = type(optparse.Option)
-
-    for i in dir(module):
-        o = getattr(module, i)
-        if hasattr(o, '__file__'):
-            continue
-
-        if type(o) == functionType:
-            setattr(o, '__file__', filename)
-        elif type(o) == classType:
-            setattr(o, '__file__', filename)
-            # TODO: assign member __file__'s?
-        # print i, type(o)
+def draw_background():
+    corners = [(0, 0), (0, _canvas_ys),
+               (_canvas_xs, _canvas_ys), (_canvas_xs, 0)]
+    polygon(corners, _bg_color, fillColor=_bg_color,
+            filled=True, smoothed=False)
 
 
-#from cStringIO import StringIO
-
-def loadModuleString(moduleSource):
-    # Below broken, imp doesn't believe its being passed a file:
-    #    ValueError: load_module arg#2 should be a file or None
-    #
-    #f = StringIO(moduleCodeDict[k])
-    #tmp = imp.load_module(k, f, k, (".py", "r", imp.PY_SOURCE))
-    tmp = imp.new_module(k)
-    exec(moduleCodeDict[k], tmp.__dict__)
-    setModuleName(tmp, k)
-    return tmp
+def _destroy_window(event=None):
+    sys.exit(0)
+#    global _root_window
+#    _root_window.destroy()
+#    _root_window = None
+    # print "DESTROY"
 
 
-import py_compile
-
-
-def loadModuleFile(moduleName, filePath):
-    # https://docs.python.org/3/library/importlib.html#importing-a-source-file-directly
-    spec = importlib.util.spec_from_file_location(moduleName, filePath)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def readFile(path, root=""):
-    "Read file from disk at specified path and return as string"
-    with open(os.path.join(root, path), 'r') as handle:
-        return handle.read()
-
-
-#######################################################################
-# Error Hint Map
-#######################################################################
-
-# TODO: use these
-ERROR_HINT_MAP = {
-    'q1': {
-        "<type 'exceptions.IndexError'>": """
-      We noticed that your project threw an IndexError on q1.
-      While many things may cause this, it may have been from
-      assuming a certain number of successors from a state space
-      or assuming a certain number of actions available from a given
-      state. Try making your code more general (no hardcoded indices)
-      and submit again!
-    """
-    },
-    'q3': {
-        "<type 'exceptions.AttributeError'>": """
-        We noticed that your project threw an AttributeError on q3.
-        While many things may cause this, it may have been from assuming
-        a certain size or structure to the state space. For example, if you have
-        a line of code assuming that the state is (x, y) and we run your code
-        on a state space with (x, y, z), this error could be thrown. Try
-        making your code more general and submit again!
-
-    """
-    }
-}
-
-import pprint
-
-
-def splitStrings(d):
-    d2 = dict(d)
-    for k in d:
-        if k[0:2] == "__":
-            del d2[k]
-            continue
-        if d2[k].find("\n") >= 0:
-            d2[k] = d2[k].split("\n")
-    return d2
-
-
-def printTest(testDict, solutionDict):
-    pp = pprint.PrettyPrinter(indent=4)
-    print("Test case:")
-    for line in testDict["__raw_lines__"]:
-        print(("   |", line))
-    print("Solution:")
-    for line in solutionDict["__raw_lines__"]:
-        print(("   |", line))
-
-
-def runTest(testName, moduleDict, printTestCase=False, display=None):
-    import testParser
-    import testClasses
-    for module in moduleDict:
-        setattr(sys.modules[__name__], module, moduleDict[module])
-
-    testDict = testParser.TestParser(testName + ".test").parse()
-    solutionDict = testParser.TestParser(testName + ".solution").parse()
-    test_out_file = os.path.join('%s.test_output' % testName)
-    testDict['test_out_file'] = test_out_file
-    testClass = getattr(projectTestClasses, testDict['class'])
-
-    questionClass = getattr(testClasses, 'Question')
-    question = questionClass({'max_points': 0}, display)
-    testCase = testClass(question, testDict)
-
-    if printTestCase:
-        printTest(testDict, solutionDict)
-
-    # This is a fragile hack to create a stub grades object
-    grades = grading.Grades(projectParams.PROJECT_NAME, [(None, 0)])
-    testCase.execute(grades, moduleDict, solutionDict)
-
-
-# returns all the tests you need to run in order to run question
-def getDepends(testParser, testRoot, question):
-    allDeps = [question]
-    questionDict = testParser.TestParser(
-        os.path.join(testRoot, question, 'CONFIG')).parse()
-    if 'depends' in questionDict:
-        depends = questionDict['depends'].split()
-        for d in depends:
-            # run dependencies first
-            allDeps = getDepends(testParser, testRoot, d) + allDeps
-    return allDeps
-
-# get list of questions to grade
-def getTestSubdirs(testParser, testRoot, questionToGrade):
-    problemDict = testParser.TestParser(
-        os.path.join(testRoot, 'CONFIG')).parse()
-    if questionToGrade != None:
-        questions = getDepends(testParser, testRoot, questionToGrade)
-        if len(questions) > 1:
-            print(('Note: due to dependencies, the following tests will be run: %s' %
-                  ' '.join(questions)))
-        return questions
-    if 'order' in problemDict:
-        return problemDict['order'].split()
-    return sorted(os.listdir(testRoot))
-
-
-# evaluate student code
-def evaluate(generateSolutions, testRoot, moduleDict, exceptionMap=ERROR_HINT_MAP,
-             edxOutput=False, muteOutput=False, gsOutput=False,
-             printTestCase=False, questionToGrade=None, display=None):
-    # imports of testbench code.  note that the testClasses import must follow
-    # the import of student code due to dependencies
-    import testParser
-    import testClasses
-    for module in moduleDict:
-        setattr(sys.modules[__name__], module, moduleDict[module])
-
-    questions = []
-    questionDicts = {}
-    test_subdirs = getTestSubdirs(testParser, testRoot, questionToGrade)
-    for q in test_subdirs:
-        subdir_path = os.path.join(testRoot, q)
-        if not os.path.isdir(subdir_path) or q[0] == '.':
-            continue
-
-        # create a question object
-        questionDict = testParser.TestParser(
-            os.path.join(subdir_path, 'CONFIG')).parse()
-        questionClass = getattr(testClasses, questionDict['class'])
-        question = questionClass(questionDict, display)
-        questionDicts[q] = questionDict
-
-        # load test cases into question
-        tests = [t for t in os.listdir(
-            subdir_path) if re.match(r'[^#~.].*\.test\Z', t)]
-        tests = [re.match(r'(.*)\.test\Z', t).group(1) for t in tests]
-        for t in sorted(tests):
-            test_file = os.path.join(subdir_path, '%s.test' % t)
-            solution_file = os.path.join(subdir_path, '%s.solution' % t)
-            test_out_file = os.path.join(subdir_path, '%s.test_output' % t)
-            testDict = testParser.TestParser(test_file).parse()
-            if testDict.get("disabled", "false").lower() == "true":
-                continue
-            testDict['test_out_file'] = test_out_file
-            testClass = getattr(projectTestClasses, testDict['class'])
-            testCase = testClass(question, testDict)
-
-            def makefun(testCase, solution_file):
-                if generateSolutions:
-                    # write solution file to disk
-                    return lambda grades: testCase.writeSolution(moduleDict, solution_file)
-                else:
-                    # read in solution dictionary and pass as an argument
-                    testDict = testParser.TestParser(test_file).parse()
-                    solutionDict = testParser.TestParser(solution_file).parse()
-                    if printTestCase:
-                        return lambda grades: printTest(testDict, solutionDict) or testCase.execute(grades, moduleDict, solutionDict)
-                    else:
-                        return lambda grades: testCase.execute(grades, moduleDict, solutionDict)
-            question.addTestCase(testCase, makefun(testCase, solution_file))
-
-        # Note extra function is necessary for scoping reasons
-        def makefun(question):
-            return lambda grades: question.execute(grades)
-        setattr(sys.modules[__name__], q, makefun(question))
-        questions.append((q, question.getMaxPoints()))
-
-    grades = grading.Grades(projectParams.PROJECT_NAME, questions,
-                            gsOutput=gsOutput, edxOutput=edxOutput, muteOutput=muteOutput)
-    if questionToGrade == None:
-        for q in questionDicts:
-            for prereq in questionDicts[q].get('depends', '').split():
-                grades.addPrereq(q, prereq)
-
-    grades.grade(sys.modules[__name__], bonusPic=projectParams.BONUS_PIC)
-    return grades.points
-
-
-def getDisplay(graphicsByDefault, options=None):
-    graphics = graphicsByDefault
-    if options is not None and options.noGraphics:
-        graphics = False
-    if graphics:
+def end_graphics():
+    global _root_window, _canvas, _mouse_enabled
+    try:
         try:
-            import graphicsDisplay
-            return graphicsDisplay.PacmanGraphics(1, frameTime=.05)
-        except ImportError:
-            pass
-    import textDisplay
-    return textDisplay.NullGraphics()
+            sleep(1)
+            if _root_window != None:
+                _root_window.destroy()
+        except SystemExit as e:
+            print(('Ending graphics raised an exception:', e))
+    finally:
+        _root_window = None
+        _canvas = None
+        _mouse_enabled = 0
+        _clear_keys()
 
+
+def clear_screen(background=None):
+    global _canvas_x, _canvas_y
+    _canvas.delete('all')
+    draw_background()
+    _canvas_x, _canvas_y = 0, _canvas_ys
+
+
+def polygon(coords, outlineColor, fillColor=None, filled=1, smoothed=1, behind=0, width=1):
+    c = []
+    for coord in coords:
+        c.append(coord[0])
+        c.append(coord[1])
+    if fillColor == None:
+        fillColor = outlineColor
+    if filled == 0:
+        fillColor = ""
+    poly = _canvas.create_polygon(
+        c, outline=outlineColor, fill=fillColor, smooth=smoothed, width=width)
+    if behind > 0:
+        _canvas.tag_lower(poly, behind)  # Higher should be more visible
+    return poly
+
+
+def square(pos, r, color, filled=1, behind=0):
+    x, y = pos
+    coords = [(x - r, y - r), (x + r, y - r), (x + r, y + r), (x - r, y + r)]
+    return polygon(coords, color, color, filled, 0, behind=behind)
+
+
+def circle(pos, r, outlineColor, fillColor, endpoints=None, style='pieslice', width=2):
+    x, y = pos
+    x0, x1 = x - r - 1, x + r
+    y0, y1 = y - r - 1, y + r
+    if endpoints == None:
+        e = [0, 359]
+    else:
+        e = list(endpoints)
+    while e[0] > e[1]:
+        e[1] = e[1] + 360
+
+    return _canvas.create_arc(x0, y0, x1, y1, outline=outlineColor, fill=fillColor,
+                              extent=e[1] - e[0], start=e[0], style=style, width=width)
+
+
+def image(pos, file="../../blueghost.gif"):
+    x, y = pos
+    # img = PhotoImage(file=file)
+    return _canvas.create_image(x, y, image=tkinter.PhotoImage(file=file), anchor=tkinter.NW)
+
+
+def refresh():
+    _canvas.update_idletasks()
+
+
+def moveCircle(id, pos, r, endpoints=None):
+    global _canvas_x, _canvas_y
+
+    x, y = pos
+#    x0, x1 = x - r, x + r + 1
+#    y0, y1 = y - r, y + r + 1
+    x0, x1 = x - r - 1, x + r
+    y0, y1 = y - r - 1, y + r
+    if endpoints == None:
+        e = [0, 359]
+    else:
+        e = list(endpoints)
+    while e[0] > e[1]:
+        e[1] = e[1] + 360
+
+    if os.path.isfile('flag'):
+        edit(id, ('extent', e[1] - e[0]))
+    else:
+        edit(id, ('start', e[0]), ('extent', e[1] - e[0]))
+    move_to(id, x0, y0)
+
+
+def edit(id, *args):
+    _canvas.itemconfigure(id, **dict(args))
+
+
+def text(pos, color, contents, font='Helvetica', size=12, style='normal', anchor="nw"):
+    global _canvas_x, _canvas_y
+    x, y = pos
+    font = (font, str(size), style)
+    return _canvas.create_text(x, y, fill=color, text=contents, font=font, anchor=anchor)
+
+
+def changeText(id, newText, font=None, size=12, style='normal'):
+    _canvas.itemconfigure(id, text=newText)
+    if font != None:
+        _canvas.itemconfigure(id, font=(font, '-%d' % size, style))
+
+
+def changeColor(id, newColor):
+    _canvas.itemconfigure(id, fill=newColor)
+
+
+def line(here, there, color=formatColor(0, 0, 0), width=2):
+    x0, y0 = here[0], here[1]
+    x1, y1 = there[0], there[1]
+    return _canvas.create_line(x0, y0, x1, y1, fill=color, width=width)
+
+##############################################################################
+### Keypress handling ########################################################
+##############################################################################
+
+# We bind to key-down and key-up events.
+
+
+_keysdown = {}
+_keyswaiting = {}
+# This holds an unprocessed key release.  We delay key releases by up to
+# one call to keys_pressed() to get round a problem with auto repeat.
+_got_release = None
+
+
+def _keypress(event):
+    global _got_release
+    # remap_arrows(event)
+    _keysdown[event.keysym] = 1
+    _keyswaiting[event.keysym] = 1
+#    print event.char, event.keycode
+    _got_release = None
+
+
+def _keyrelease(event):
+    global _got_release
+    # remap_arrows(event)
+    try:
+        del _keysdown[event.keysym]
+    except:
+        pass
+    _got_release = 1
+
+
+def remap_arrows(event):
+    # TURN ARROW PRESSES INTO LETTERS (SHOULD BE IN KEYBOARD AGENT)
+    if event.char in ['a', 's', 'd', 'w']:
+        return
+    if event.keycode in [37, 101]:  # LEFT ARROW (win / x)
+        event.char = 'a'
+    if event.keycode in [38, 99]:  # UP ARROW
+        event.char = 'w'
+    if event.keycode in [39, 102]:  # RIGHT ARROW
+        event.char = 'd'
+    if event.keycode in [40, 104]:  # DOWN ARROW
+        event.char = 's'
+
+
+def _clear_keys(event=None):
+    global _keysdown, _got_release, _keyswaiting
+    _keysdown = {}
+    _keyswaiting = {}
+    _got_release = None
+
+
+def keys_pressed(d_o_e=lambda arg: _root_window.dooneevent(arg),
+                 d_w=tkinter._tkinter.DONT_WAIT):
+    d_o_e(d_w)
+    if _got_release:
+        d_o_e(d_w)
+    return list(_keysdown.keys())
+
+
+def keys_waiting():
+    global _keyswaiting
+    keys = list(_keyswaiting.keys())
+    _keyswaiting = {}
+    return keys
+
+# Block for a list of keys...
+
+
+def wait_for_keys():
+    keys = []
+    while keys == []:
+        keys = keys_pressed()
+        sleep(0.05)
+    return keys
+
+
+def remove_from_screen(x,
+                       d_o_e=lambda arg: _root_window.dooneevent(arg),
+                       d_w=tkinter._tkinter.DONT_WAIT):
+    _canvas.delete(x)
+    d_o_e(d_w)
+
+
+def _adjust_coords(coord_list, x, y):
+    for i in range(0, len(coord_list), 2):
+        coord_list[i] = coord_list[i] + x
+        coord_list[i + 1] = coord_list[i + 1] + y
+    return coord_list
+
+
+def move_to(object, x, y=None,
+            d_o_e=lambda arg: _root_window.dooneevent(arg),
+            d_w=tkinter._tkinter.DONT_WAIT):
+    if y is None:
+        try:
+            x, y = x
+        except:
+            raise Exception('incomprehensible coordinates')
+
+    horiz = True
+    newCoords = []
+    current_x, current_y = _canvas.coords(object)[0:2]  # first point
+    for coord in _canvas.coords(object):
+        if horiz:
+            inc = x - current_x
+        else:
+            inc = y - current_y
+        horiz = not horiz
+
+        newCoords.append(coord + inc)
+
+    _canvas.coords(object, *newCoords)
+    d_o_e(d_w)
+
+
+def move_by(object, x, y=None,
+            d_o_e=lambda arg: _root_window.dooneevent(arg),
+            d_w=tkinter._tkinter.DONT_WAIT, lift=False):
+    if y is None:
+        try:
+            x, y = x
+        except:
+            raise Exception('incomprehensible coordinates')
+
+    horiz = True
+    newCoords = []
+    for coord in _canvas.coords(object):
+        if horiz:
+            inc = x
+        else:
+            inc = y
+        horiz = not horiz
+
+        newCoords.append(coord + inc)
+
+    _canvas.coords(object, *newCoords)
+    d_o_e(d_w)
+    if lift:
+        _canvas.tag_raise(object)
+
+
+def writePostscript(filename):
+    "Writes the current canvas to a postscript file."
+    psfile = open(filename, 'w')
+    psfile.write(_canvas.postscript(pageanchor='sw',
+                                    y='0.c',
+                                    x='0.c'))
+    psfile.close()
+
+
+ghost_shape = [
+    (0, - 0.5),
+    (0.25, - 0.75),
+    (0.5, - 0.5),
+    (0.75, - 0.75),
+    (0.75, 0.5),
+    (0.5, 0.75),
+    (- 0.5, 0.75),
+    (- 0.75, 0.5),
+    (- 0.75, - 0.75),
+    (- 0.5, - 0.5),
+    (- 0.25, - 0.75)
+]
 
 if __name__ == '__main__':
-    options = readCommand(sys.argv)
-    if options.generateSolutions:
-        confirmGenerate()
-    codePaths = options.studentCode.split(',')
-    # moduleCodeDict = {}
-    # for cp in codePaths:
-    #     moduleName = re.match(r'.*?([^/]*)\.py', cp).group(1)
-    #     moduleCodeDict[moduleName] = readFile(cp, root=options.codeRoot)
-    # moduleCodeDict['projectTestClasses'] = readFile(options.testCaseCode, root=options.codeRoot)
-    # moduleDict = loadModuleDict(moduleCodeDict)
-
-    moduleDict = {}
-    for cp in codePaths:
-        moduleName = re.match(r'.*?([^/]*)\.py', cp).group(1)
-        moduleDict[moduleName] = loadModuleFile(
-            moduleName, os.path.join(options.codeRoot, cp))
-    moduleName = re.match(r'.*?([^/]*)\.py', options.testCaseCode).group(1)
-    moduleDict['projectTestClasses'] = loadModuleFile(
-        moduleName, os.path.join(options.codeRoot, options.testCaseCode))
-
-    if options.runTest != None:
-        runTest(options.runTest, moduleDict, printTestCase=options.printTestCase,
-                display=getDisplay(True, options))
-    else:
-        evaluate(options.generateSolutions, options.testRoot, moduleDict,
-                 gsOutput=options.gsOutput,
-                 edxOutput=options.edxOutput, muteOutput=options.muteOutput, printTestCase=options.printTestCase,
-                 questionToGrade=options.gradeQuestion, display=getDisplay(options.gradeQuestion != None, options))
+    begin_graphics()
+    clear_screen()
+    ghost_shape = [(x * 10 + 20, y * 10 + 20) for x, y in ghost_shape]
+    g = polygon(ghost_shape, formatColor(1, 1, 1))
+    move_to(g, (50, 50))
+    circle((150, 150), 20, formatColor(0.7, 0.3, 0.0), endpoints=[15, - 15])
+    sleep(2)

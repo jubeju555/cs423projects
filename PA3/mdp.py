@@ -1,10 +1,10 @@
-# ghostAgents.py
-# --------------
+# mdp.py
+# ------
 # Licensing Information:  You are free to use or extend these projects for
 # educational purposes provided that (1) you do not distribute or publish
 # solutions, (2) you retain this notice, and (3) you provide clear
 # attribution to UC Berkeley, including a link to http://ai.berkeley.edu.
-#
+# 
 # Attribution Information: The Pacman AI projects were developed at UC Berkeley.
 # The core projects and autograders were primarily created by John DeNero
 # (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
@@ -12,82 +12,57 @@
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 
-from game import Agent
-from game import Actions
-from game import Directions
+from __future__ import absolute_import
 import random
-from util import manhattanDistance
-import util
 
+class MarkovDecisionProcess:
 
-class GhostAgent(Agent):
-    def __init__(self, index):
-        self.index = index
+    def getStates(self):
+        """
+        Return a list of all states in the MDP.
+        Not generally possible for large MDPs.
+        """
+        abstract
 
-    def getAction(self, state):
-        dist = self.getDistribution(state)
-        if len(dist) == 0:
-            return Directions.STOP
-        else:
-            return util.chooseFromDistribution(dist)
+    def getStartState(self):
+        """
+        Return the start state of the MDP.
+        """
+        abstract
 
-    def getDistribution(self, state):
-        "Returns a Counter encoding a distribution over actions from the provided state."
-        util.raiseNotDefined()
+    def getPossibleActions(self, state):
+        """
+        Return list of possible actions from 'state'.
+        """
+        abstract
 
+    def getTransitionStatesAndProbs(self, state, action):
+        """
+        Returns list of (nextState, prob) pairs
+        representing the states reachable
+        from 'state' by taking 'action' along
+        with their transition probabilities.
 
-class RandomGhost(GhostAgent):
-    "A ghost that chooses a legal action uniformly at random."
+        Note that in Q-Learning and reinforcment
+        learning in general, we do not know these
+        probabilities nor do we directly model them.
+        """
+        abstract
 
-    def getDistribution(self, state):
-        dist = util.Counter()
-        for a in state.getLegalActions(self.index):
-            dist[a] = 1.0
-        dist.normalize()
-        return dist
+    def getReward(self, state, action, nextState):
+        """
+        Get the reward for the state, action, nextState transition.
 
+        Not available in reinforcement learning.
+        """
+        abstract
 
-class DirectionalGhost(GhostAgent):
-    "A ghost that prefers to rush Pacman, or flee when scared."
-
-    def __init__(self, index, prob_attack=0.8, prob_scaredFlee=0.8):
-        self.index = index
-        self.prob_attack = prob_attack
-        self.prob_scaredFlee = prob_scaredFlee
-
-    def getDistribution(self, state):
-        # Read variables from state
-        ghostState = state.getGhostState(self.index)
-        legalActions = state.getLegalActions(self.index)
-        pos = state.getGhostPosition(self.index)
-        isScared = ghostState.scaredTimer > 0
-
-        speed = 1
-        if isScared:
-            speed = 0.5
-
-        actionVectors = [Actions.directionToVector(
-            a, speed) for a in legalActions]
-        newPositions = [(pos[0]+a[0], pos[1]+a[1]) for a in actionVectors]
-        pacmanPosition = state.getPacmanPosition()
-
-        # Select best actions given the state
-        distancesToPacman = [manhattanDistance(
-            pos, pacmanPosition) for pos in newPositions]
-        if isScared:
-            bestScore = max(distancesToPacman)
-            bestProb = self.prob_scaredFlee
-        else:
-            bestScore = min(distancesToPacman)
-            bestProb = self.prob_attack
-        bestActions = [action for action, distance in zip(
-            legalActions, distancesToPacman) if distance == bestScore]
-
-        # Construct distribution
-        dist = util.Counter()
-        for a in bestActions:
-            dist[a] = bestProb / len(bestActions)
-        for a in legalActions:
-            dist[a] += (1-bestProb) / len(legalActions)
-        dist.normalize()
-        return dist
+    def isTerminal(self, state):
+        """
+        Returns true if the current state is a terminal state.  By convention,
+        a terminal state has zero future rewards.  Sometimes the terminal state(s)
+        may have no possible actions.  It is also common to think of the terminal
+        state as having a self-loop action 'pass' with zero reward; the formulations
+        are equivalent.
+        """
+        abstract

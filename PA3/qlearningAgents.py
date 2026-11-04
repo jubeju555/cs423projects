@@ -12,6 +12,7 @@
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 
+from __future__ import absolute_import
 from game import *
 from learningAgents import ReinforcementAgent
 from featureExtractors import *
@@ -96,6 +97,7 @@ class QLearningAgent(ReinforcementAgent):
         # Pick Action
         legalActions = self.getLegalActions(state)
         if not legalActions:
+            # Terminal states have no action to explore or follow.
             return None
 
         action = None
@@ -191,7 +193,8 @@ class ApproximateQAgent(PacmanQAgent):
         """
            Should update your weights based on transition
         """
-        # newvalue-old
+        # The difference is the error between the current estimate and the
+        # reward plus the best estimated value of the next state.
         difference = (reward + self.discount * self.computeValueFromQValues(nextState)) - self.getQValue(state, action)
 
         features = self.featExtractor.getFeatures(state, action)
