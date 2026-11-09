@@ -21,49 +21,49 @@
 
 def question2():
     answerDiscount = 0.9
-    answerNoise = 0.015
+    answerNoise = 0.2
     return answerDiscount, answerNoise
 
 def question3a():
-    answerDiscount = 0.9
-    answerNoise = 0.2
-    answerLivingReward = -3.0
+    answerDiscount = None
+    answerNoise = None
+    answerLivingReward = None
     return answerDiscount, answerNoise, answerLivingReward
     # If not possible, return 'NOT POSSIBLE'
 
 def question3b():
-    answerDiscount = 0.2
-    answerNoise = 0.2
-    answerLivingReward = -2
+    answerDiscount = None
+    answerNoise = None
+    answerLivingReward = None
     return answerDiscount, answerNoise, answerLivingReward
     # If not possible, return 'NOT POSSIBLE'
 
 def question3c():
-    answerDiscount = 0.9
-    answerNoise = 0.003
-    answerLivingReward = 0.004
+    answerDiscount = None
+    answerNoise = None
+    answerLivingReward = None
     return answerDiscount, answerNoise, answerLivingReward
     # If not possible, return 'NOT POSSIBLE'
 
 def question3d():
-    answerDiscount = 0.85
-    answerNoise = 0.2
-    answerLivingReward = 0.01
+    answerDiscount = None
+    answerNoise = None
+    answerLivingReward = None
     return answerDiscount, answerNoise, answerLivingReward
     # If not possible, return 'NOT POSSIBLE'
 
 def question3e():
-    answerDiscount = 0
-    answerNoise = 0.15
-    answerLivingReward = -3
+    answerDiscount = None
+    answerNoise = None
+    answerLivingReward = None
     return answerDiscount, answerNoise, answerLivingReward
     # If not possible, return 'NOT POSSIBLE'
 
 def question6():
     answerEpsilon = None
     answerLearningRate = None
-    # return answerEpsilon, answerLearningRate
-    return 'NOT POSSIBLE'
+    return answerEpsilon, answerLearningRate
+    # If not possible, return 'NOT POSSIBLE'
 
 if __name__ == '__main__':
     print('Answers to analysis questions:')
