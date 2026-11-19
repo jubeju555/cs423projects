@@ -27,52 +27,40 @@ class QLearningAgent(ReinforcementAgent):
         return self.values[(state, action)]
 
     def computeValueFromQValues(self, state):
-        legal_actions = self.getLegalActions(state)
-        if not legal_actions:
-            return 0.0
-
-        best_value = float('-inf')
-        for action in legal_actions:
-            action_value = self.getQValue(state, action)
-            if action_value > best_value:
-                best_value = action_value
-
-        return best_value
+        actions = self.getLegalActions(state)
+        return max((self.getQValue(state, action) for action in actions),
+                   default=0.0)
 
     def computeActionFromQValues(self, state):
-        legal_actions = self.getLegalActions(state)
-        if not legal_actions:
+        actions = self.getLegalActions(state)
+        if not actions:
             return None
 
         best_value = self.computeValueFromQValues(state)
-        tied_actions = []
+        best_actions = []
+        for action in actions:
+            if self.getQValue(state, action) == best_value:
+                best_actions.append(action)
 
-        for action in legal_actions:
-            action_value = self.getQValue(state, action)
-            if action_value == best_value:
-                tied_actions.append(action)
-
-        return random.choice(tied_actions)
+        return random.choice(best_actions)
 
     def getAction(self, state):
-        legal_actions = self.getLegalActions(state)
-        if not legal_actions:
+        actions = self.getLegalActions(state)
+        if not actions:
             return None
 
-        should_explore = util.flipCoin(self.epsilon)
-        if should_explore:
-            return random.choice(legal_actions)
+        if util.flipCoin(self.epsilon):
+            return random.choice(actions)
+        return self.computeActionFromQValues(state)
 
         return self.computeActionFromQValues(state)
 
     def update(self, state, action, nextState, reward):
-        current_estimate = self.getQValue(state, action)
-        best_next_value = self.computeValueFromQValues(nextState)
-        target = reward + self.discount * best_next_value
+        old_value = self.getQValue(state, action)
+        next_value = self.computeValueFromQValues(nextState)
+        target = reward + self.discount * next_value
 
-        old_contribution = (1 - self.alpha) * current_estimate
-        new_contribution = self.alpha * target
-        self.values[(state, action)] = old_contribution + new_contribution
+        self.values[(state, action)] = old_value + self.alpha * (target - old_value)
 
     def getPolicy(self, state):
         return self.computeActionFromQValues(state)
